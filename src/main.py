@@ -44,7 +44,7 @@ def run_experiment_new(source, target, source_left, target_left,source_right,tar
     source_pca = copy.deepcopy(source_ds)
     source_pca.transform(pca_transformation)
     pca_rmse = compute_rmse(source_pca, target_ds)
-    results['PCA'] = {'time': pca_time, 'rmse': pca_rmse, 'transformation': pca_transformation}
+    results['PCA'] = {'time': pca_time , 'rmse': pca_rmse, 'transformation': pca_transformation}
 
     
     # RANSAC 配准
@@ -72,6 +72,25 @@ def run_experiment_new(source, target, source_left, target_left,source_right,tar
     
     return results
 
+def run_double_pca(source, target, source_left, target_left,source_right,target_right,voxel_size):
+    """
+    运行实验，比较三种粗配准方法的精度和时间。
+    """
+    results = {}
+
+    # 预处理点云数据
+    source_ds, target_ds, source_fpfh, target_fpfh = prepare_dataset(source, target, voxel_size)
+    
+    # 对称双分支 PCA 配准
+    start_time = time.time()
+    pca_double_trasformation = pca_double_adjust(source_ds, target_ds,source_left, target_left,source_right,target_right)
+    # pca_double_trasformation = traditional_pca_registration(source_ds, target_ds)
+    double_time = time.time() - start_time
+    source_double = copy.deepcopy(source_ds)
+    source_double.transform(pca_double_trasformation)
+    double_rmse = compute_rmse(source_double, target_ds)
+    results['对称双分支PCA'] = {'time': double_time, 'rmse': double_rmse, 'transformation': pca_double_trasformation}
+    return results
 
 def run_experiment(source, target, voxel_size=0.05):
     """
@@ -204,10 +223,9 @@ def visualize_results(source, target, results, voxel_size=0.05):
 
 
 
-def publicCoarseMain():
-        # 加载并预处理 Bunny 点云
+def publicBunnyCoarseMain():
+    # 加载并预处理 Bunny 点云
     source = o3d.data.BunnyMesh()
-    # source = o3d.data.ArmadilloMesh()
     print("加载完成")
     source_pcd = o3d.io.read_point_cloud(source.path)
     source_pcd = source_pcd.voxel_down_sample(voxel_size=0.0005)
@@ -217,6 +235,7 @@ def publicCoarseMain():
     source_right = source_pcd.select_by_index(right_indices)
     
     # 对点云进行变换
+    # Bunny点云变换
     target_pcd = apply_transformation(source_pcd, angle=40, translation=[0.2, 0, 0], noise_std=0.0005)
 
     target_left = target_pcd.select_by_index(left_indices)
@@ -227,12 +246,8 @@ def publicCoarseMain():
 
     visualize_two_pcds(source_left, target_left, voxel_size1=0.0005, voxel_size2=0.0005)
 
-
-
-    #     # 调整目标点云密度（减少 20%）
-    # target_pcd = target_pcd.random_down_sample(0.8)
-    # visualize_two_pcds(source_pcd, target_pcd, voxel_size1=0.0005, voxel_size2=0.0005)
-
+    # 调整目标点云密度（减少 20%）
+    target_pcd = target_pcd.random_down_sample(0.8)
     print("预处理完成")
     # 运行实验
     # results = run_experiment(source_pcd, target_pcd,voxel_size=0.0005)
@@ -243,17 +258,61 @@ def publicCoarseMain():
     for method, data in results.items():
         print(f"{method} - 时间: {data['time']:.4f}s, RMSE: {data['rmse']:.6f}")
     
+    visualize_results(source_pcd, target_pcd, results, voxel_size=0.0005)
+
+def publicArmadilloCoarseMain():
+    # 加载并预处理 ArmadilloMesh 点云
+    source = o3d.data.ArmadilloMesh()
+    print("加载完成")
+    source_pcd = o3d.io.read_point_cloud(source.path)
+    source_pcd = source_pcd.voxel_down_sample(voxel_size=0.5)
+    # 分割原始点云并保存索引
+    left_indices, right_indices = split_point_cloud(source_pcd)
+    source_left = source_pcd.select_by_index(left_indices)
+    source_right = source_pcd.select_by_index(right_indices)
+    
+    # 对点云进行变换
+    # Armadillo点云变换
+    target_pcd = apply_transformation(source_pcd, angle=88, translation=[50, 0, 0], noise_std=0.5)
+
+    target_left = target_pcd.select_by_index(left_indices)
+    target_right = target_pcd.select_by_index(right_indices)
+    # 验证点数是否匹配
+    print(f"原始左侧点数: {len(source_left.points)}, 变换后左侧点数: {len(target_left.points)}")
+    print(f"原始右侧点数: {len(source_right.points)}, 变换后右侧点数: {len(target_right.points)}")
+
+    # visualize_two_pcds(source_left, target_left, voxel_size1=0.5, voxel_size2=0.5)
+
+    # 调整目标点云密度（减少 20%）
+    target_pcd = target_pcd.random_down_sample(0.8)
+    print("预处理完成")
+    # 运行实验
+    # results = run_experiment(source_pcd, target_pcd,voxel_size=0.0005)
+    results = run_experiment_new(source_pcd, target_pcd,source_left, target_left,source_right, target_right,voxel_size=0.5)
+    
+    # 整体输出结果与可视化
+    print("粗配准实验结果：")
+    for method, data in results.items():
+        print(f"{method} - 时间: {data['time']:.4f}s, RMSE: {data['rmse']:.6f}")
+    
 
     visualize_results(source_pcd, target_pcd, results, voxel_size=0.0005)
 
-def mymain():
+def myCoarseMain():
 
-    source_pcd = load_point_cloud_from_txt("../data/before_0307_161339.txt")
-    target_pcd = load_point_cloud_from_txt("../data/real_0307_161339.txt")
+    source_pcd = load_point_cloud_from_txt("../data/0427/source_all.txt")
+    target_pcd = load_point_cloud_from_txt("../data/0427/target_all.txt")
+    source_left = load_point_cloud_from_txt("../data/0427/source_before_left.txt")
+    source_right = load_point_cloud_from_txt("../data/0427/source_before_right.txt")
+    target_left = load_point_cloud_from_txt("../data/0427/target_left.txt")
+    target_right = load_point_cloud_from_txt("../data/0427/target_right.txt")
+
+    # source_left_pcd = o3d.io.read_point_cloud("/home/daichang/Desktop/bunny_registration_experiment/data/surgery_before_left.ply")
     visualize_two_point_clouds(source_pcd, target_pcd)
 
     # 运行实验
-    results = run_experiment(source_pcd, target_pcd,voxel_size=0.0005)
+    # results = run_experiment(source_pcd, target_pcd,voxel_size=0.0005)
+    results = run_experiment_new(source_pcd, target_pcd,source_left, target_left,source_right, target_right,voxel_size=0.0005)
     
     # 输出结果
     print("粗配准实验结果：")
@@ -419,15 +478,19 @@ def publicfinemain():
 if __name__ == "__main__":
     # 调用函数并可视化
     ##################初始姿态  图3-13a 3-13b########################
-    visualize_transformed_bunny(angle=40, translation=[0.2, 0, 0], noise_std=0.0)
-    visualize_transformed_armadillo(angle=40, translation=[50, 0, 0], noise_std=0.0)  # 确保传递平移参数
+    # visualize_transformed_bunny(angle=40, translation=[0.2, 0, 0], noise_std=0.0005)
+    # visualize_transformed_armadillo(angle=40, translation=[50, 0, 0], noise_std=0.5)  # 确保传递平移参数
    
-    ################ 开源粗配准#########################
-    publicCoarseMain()
-    ################## 自建数据粗配准 #####################
-    # mymain()
+    ################表 4-3 Bunny 粗配准均方误差和配准时间#########################
+    # publicBunnyCoarseMain()
+    ################表 4-4 Armadillo 粗配准均方误差和配准时间#########################
+    # publicArmadilloCoarseMain()
+    ################## 表 4-5 牙齿轮廓点云配准定量对比（均值 ± 标准差） #####################
+    # myCoarseMain()
+
+
     # 开源精配准
-    # publicfinemain()
+    publicfinemain()
     # 自建数据精配准
     # myfinemain()
 

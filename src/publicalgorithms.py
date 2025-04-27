@@ -89,7 +89,10 @@ def traditional_pca_registration_no(source, target):
     transformation[:3, :3] = R
     transformation[:3, 3] = t
 
+    # time.sleep(1.7)
+
     return transformation
+
 
 
 def execute_global_registration(source_down, target_down, source_fpfh, target_fpfh, voxel_size):

@@ -173,14 +173,9 @@ def pca_double_adjust(source_cloud, target_cloud, source_pca, target_pca,source_
             print("矩阵数值异常，跳过")
             continue
 
-        print("调整后的 R_left 行列式:", np.linalg.det(R_left))
-        print("调整后的 R_right 行列式:", np.linalg.det(R_right))
 
         R_left = ensure_rotation_matrix(R_left)
         R_right = ensure_rotation_matrix(R_right)
-
-        print("修正后的 R_left 行列式:", np.linalg.det(R_left))
-        print("修正后的 R_right 行列式:", np.linalg.det(R_right))
 
 
         if not is_valid_rotation_matrix(R_left) or not is_valid_rotation_matrix(R_right):
@@ -191,12 +186,9 @@ def pca_double_adjust(source_cloud, target_cloud, source_pca, target_pca,source_
         t_right = target_right_centroid - R_right @ source_right_centroid
 
         
-        print("jisuanjieshu1")
         # ---- 平均变换（基于四元数球面平均）----------------
         # 将旋转矩阵转换为四元数
         try:
-            # q_left = Rotation.from_matrix(R_left).as_quat()
-            # q_right = Rotation.from_matrix(R_right).as_quat()
             q_left = Quaternion(matrix=R_left)
             q_right = Quaternion(matrix=R_right)
         except Exception as e:
@@ -204,7 +196,6 @@ def pca_double_adjust(source_cloud, target_cloud, source_pca, target_pca,source_
             continue
         q_avg = average_quaternions(q_left, q_right)
         R_avg = q_avg.rotation_matrix
-        print("jisuanjieshu2")
 
         # 平均位移
         t_avg = (t_left + t_right) * 0.5
@@ -228,55 +219,45 @@ def pca_double_adjust(source_cloud, target_cloud, source_pca, target_pca,source_
 
 
 
-def pca_double_adjust_old(source_cloud, target_cloud, source_pca, target_pca,source_pca2, target_pca2):
-    if target_pca is None or target_pca2 is None:
-        print("target_pca is None")
-        return None
-    # 将源点云和目标点云的点转换为NumPy数组
-    source_points = np.asarray(source_cloud.points)
-    target_points = np.asarray(target_cloud.points)
-    source_pca_points = np.asarray(source_pca.points)
-    target_pca_points = np.asarray(target_pca.points)
-    source_pca2_points = np.asarray(source_pca2.points)
-    target_pca2_points = np.asarray(target_pca2.points)
-    
-    # 计算源点云和目标点云的PCA特征向量和质心
-    source_eigenvectors, source_centroid = compute_pca(source_points)
-    target_eigenvectors, target_centroid = compute_pca(target_points)
+def pca_double_adjust_old(source, target,source_pca=0, target_pca=0,source_pca2=0, target_pca2=0):
+    # 获取点云数据
+    source_points = np.asarray(source.points)
+    target_points = np.asarray(target.points)
 
-    # 初始化结果列表
-    initial_results = []
+    # 计算源点云和目标点云的质心
+    source_centroid = np.mean(source_points, axis=0)
+    target_centroid = np.mean(target_points, axis=0)
 
-    # 遍历所有 8 种可能的主轴方向组合
-    for i in range(8):
-        signs = [(-1 if i & (1 << bit) else 1) for bit in range(3)]  # 生成一个包含3个元素的列表，分别为-1或1
-        adjusted_source_eigenvectors = source_eigenvectors * signs  # 调整源点云的特征向量方向
-        # 计算旋转矩阵和平移向量（重要）
-        R = np.dot(target_eigenvectors, adjusted_source_eigenvectors.T) 
-        t = target_centroid - np.dot(R, source_centroid)
-        transformed_left_source = transform_points(source_pca_points, R, t)
-        transformed_right_source = transform_points(source_pca2_points, R, t)
+    # 将点云中心化（减去质心）
+    source_centered = source_points - source_centroid
+    target_centered = target_points - target_centroid
 
-        rmse_left = calculate_rmse(transformed_left_source, target_pca_points)
-        rmse_right = calculate_rmse(transformed_right_source, target_pca2_points)
-        # 先尝试不计算重叠率
-        initial_results.append((rmse_left, rmse_right, R, t, tuple(signs), i))
-    min_rmse_left = min(initial_results, key=lambda x: x[0])
-    min_rmse_right = min(initial_results, key=lambda x: x[1])
-    # 确保筛选出的结果是同一个
-    sigma = 1
-    if min_rmse_left == min_rmse_right and min_rmse_left[0] < sigma:
-        best_result = min_rmse_left
-    else:
-        return None
-    rmse_left, rmse_right, R, t, signs, i = best_result
-    coarse_transformation = np.eye(4)
-    coarse_transformation[:3, :3] = R
-    coarse_transformation[:3, 3] = t
-    source_cloud.transform(coarse_transformation)
-    transformed_whole_source = np.asarray(source_cloud.points)
+    # 计算源点云和目标点云的协方差矩阵
+    source_cov = np.cov(source_centered.T)
+    target_cov = np.cov(target_centered.T)
 
-    rmse = calculate_rmse(transformed_whole_source, target_points)
-        
-    # return coarse_transformation, source_cloud, rmse
-    return coarse_transformation
+    # 计算协方差矩阵的特征值和特征向量
+    source_eigvals, source_eigvecs = np.linalg.eigh(source_cov)
+    target_eigvals, target_eigvecs = np.linalg.eigh(target_cov)
+
+    # 对特征向量进行排序（按特征值从大到小）
+    source_eigvecs = source_eigvecs[:, np.argsort(-source_eigvals)]
+    target_eigvecs = target_eigvecs[:, np.argsort(-target_eigvals)]
+
+    # 确保特征向量方向正确（避免符号模糊性问题）
+    for i in range(3):
+        if np.dot(source_eigvecs[:, i], target_eigvecs[:, i]) < 0:
+            target_eigvecs[:, i] *= -1
+
+    # 计算旋转矩阵
+    R = target_eigvecs @ source_eigvecs.T
+
+    # 计算平移向量
+    t = target_centroid - R @ source_centroid
+
+    # 构造变换矩阵
+    transformation = np.eye(4)
+    transformation[:3, :3] = R
+    transformation[:3, 3] = t
+
+    return transformation
