@@ -9,7 +9,6 @@ from sklearn.decomposition import PCA
 from pyquaternion import Quaternion
 
 
-
 # def compute_pca(points):
 #         # 计算点集的中心点。这里使用np.mean计算所有点的平均值，axis=0确保按列求平均（即对每个维度求平均）。
 #         centroid = np.mean(points, axis=0)
@@ -261,3 +260,150 @@ def pca_double_adjust_old(source, target,source_pca=0, target_pca=0,source_pca2=
     transformation[:3, 3] = t
 
     return transformation
+
+def bar_tw_icp_registration(source, target, init_transform=np.eye(4), 
+                           max_iter=50, tau=1.0, eta=0.95, c=4.685, gamma=0.5,
+                           convergence_threshold=1e-6):
+    """
+    双向自适应鲁棒加权ICP配准算法
+    
+    参数:
+        source (o3d.geometry.PointCloud): 源点云（如术前规划点云）
+        target (o3d.geometry.PointCloud): 目标点云（如术中采集点云）
+        init_transform (np.array): 粗配准得到的初始变换矩阵 (4x4)
+        max_iter (int): 最大迭代次数
+        tau (float): 双向搜索距离阈值
+        eta (float): 阈值衰减系数(0.9~0.99)
+        c (float): Tukey权重调节因子
+        gamma (float): Hausdorff距离缩放因子
+        convergence_threshold (float): 收敛条件
+        
+    返回:
+        o3d.registration.RegistrationResult: 包含最终变换矩阵和评估指标
+    """
+    source_temp = copy.deepcopy(source)
+    
+    # 初始变换
+    source_temp = source.transform(init_transform)
+    source_points = np.asarray(source_temp.points)
+    target_points = np.asarray(target.points)
+    N, M = len(source_points), len(target_points)
+
+    # 初始化鲁棒参数
+    sigma = gamma * compute_hausdorff(source_points, target_points)
+    prev_rmse = np.inf
+    
+    # 构建目标点云的KDTree (反向验证用)
+    target_kdtree = cKDTree(target_points)
+    source_kdtree = cKDTree(source_points)
+
+    current_transform = init_transform.copy()
+    current_rmse = float('inf')  # 添加变量初始化
+    history = []
+
+    for iteration in range(max_iter):
+        ### 阶段1: 双向几何一致性验证 ###
+        # 正向搜索：source -> target
+        _, fw_indices = target_kdtree.query(source_points, k=1, eps=0)
+        fw_pairs = list(zip(range(N), fw_indices))
+        
+        # 反向验证：target点反向查找source
+        valid_pairs = []
+        for s_idx, t_idx in fw_pairs:
+            query_point = target_points[t_idx]
+            # 反向搜索最近邻
+            bv_dist, bv_idx = source_kdtree.query(query_point, k=1, eps=0)
+            if bv_idx == s_idx and bv_dist < tau:
+                valid_pairs.append( (s_idx, t_idx) )
+        
+        if len(valid_pairs) == 0:
+            print(f"Iter {iteration}: 没有有效匹配点对!")
+            break
+
+        ### 阶段2: 计算残差与权重 ###
+        src_corr = source_points[[p[0] for p in valid_pairs]]
+        tgt_corr = target_points[[p[1] for p in valid_pairs]]
+        
+        # 应用当前变换
+        transformed_src = np.dot(src_corr, current_transform[:3, :3].T) + current_transform[:3, 3]
+        residuals = np.linalg.norm(transformed_src - tgt_corr, axis=1)
+        
+        # 计算鲁棒权重：Tukey双权函数
+        residual_scale = np.median(residuals)  # 更鲁棒的尺度估计
+        sigma_current = max(sigma * (eta**iteration), 1e-6)  # 防止除以零
+        
+        # Tukey权重计算
+        adjusted_res = residuals / (c * sigma_current)
+        weights = np.where(adjusted_res <= 1.0, 
+                          (1 - adjusted_res**2)**2, 
+                          0.0)  # Eq.(6)
+        total_weight = np.sum(weights)
+        if total_weight < 1e-7: 
+            current_rmse = float('inf')  # 确保变量赋值
+            print(f"Iter {iteration}: 权重极低，终止迭代")
+            break
+        
+        ### 阶段3: 加权SVD求解刚体变换 ###
+        src_centroid = np.average(src_corr, axis=0, weights=weights)
+        tgt_centroid = np.average(tgt_corr, axis=0, weights=weights)
+        
+        src_centered = src_corr - src_centroid
+        tgt_centered = tgt_corr - tgt_centroid
+        
+        W = np.diag(weights)
+        S = src_centered.T @ W @ tgt_centered  # 加权协方差矩阵
+        
+        # SVD分解求解旋转
+        U, _, VT = np.linalg.svd(S)
+        R = VT.T @ U.T
+        if np.linalg.det(R) < 0:  # 处理反射情况
+            VT[-1, :] *= -1
+            R = VT.T @ U.T
+        
+        # 平移计算
+        t = tgt_centroid - R @ src_centroid
+        
+        # 更新全局变换
+        delta_transform = np.eye(4)
+        delta_transform[:3, :3] = R
+        delta_transform[:3, 3] = t
+        current_transform = delta_transform @ current_transform
+        
+        # 收敛判断
+        delta_rot = np.linalg.norm(R - np.eye(3), 'fro')
+        delta_trans = np.linalg.norm(t)
+        if delta_rot < convergence_threshold and delta_trans < convergence_threshold:
+            print(f"Iter {iteration}: 收敛!")
+            break
+        
+        ### 收据收集与显示 ###
+        current_rmse = np.sqrt(np.sum(weights * residuals**2) / total_weight)
+        history.append({'iter': iteration, 'rmse': current_rmse, 
+                       'num_valid': len(valid_pairs), 'sigma': sigma_current})
+        prev_rmse = current_rmse
+    
+    ### 返回Open3D标准格式 ###
+    result = o3d.pipelines.registration.RegistrationResult()
+    result.transformation = current_transform
+    result.inlier_rmse = current_rmse
+    result.fitness = len(valid_pairs) / min(N, M)  # 内点比例
+    
+    return result, history
+
+def compute_hausdorff(source, target):
+    """计算Hausdorff距离的近似值（Open3D优化版本）"""
+    dist1 = np.max( o3d.geometry.PointCloud.compute_point_cloud_distance(
+        o3d.geometry.PointCloud(o3d.utility.Vector3dVector(source)),
+        o3d.geometry.PointCloud(o3d.utility.Vector3dVector(target)) ))
+    dist2 = np.max( o3d.geometry.PointCloud.compute_point_cloud_distance(
+        o3d.geometry.PointCloud(o3d.utility.Vector3dVector(target)),
+        o3d.geometry.PointCloud(o3d.utility.Vector3dVector(source)) ))
+    return max(dist1, dist2)
+
+def compute_hausdorff_fine(source_points, target_points):
+    """计算对称Hausdorff距离"""
+    src_tree = cKDTree(source_points)
+    tgt_tree = cKDTree(target_points)
+    dist1, _ = src_tree.query(target_points, k=1)  # target到source的距离
+    dist2, _ = tgt_tree.query(source_points, k=1)  # source到target的距离
+    return max(np.max(dist1), np.max(dist2))

@@ -5,6 +5,7 @@ import sys
 import os
 import pandas as pd
 import open3d as o3d
+from scipy.spatial import cKDTree
 
 # 将项目根目录添加到 Python 路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -340,6 +341,22 @@ def compute_rmse(source, target):
     dists = source.compute_point_cloud_distance(target)
     return np.sqrt(np.mean(np.square(dists)))
 
+# def compute_rmse_fine_old(source_points, target_points, trans_matrix):
+#     """计算全局RMSE（考虑所有对应点）"""
+#     transformed = np.dot(source_points, trans_matrix[:3, :3].T) + trans_matrix[:3, 3]
+#     tree = cKDTree(target_points)
+#     distances, _ = tree.query(transformed, k=1)
+#     valid_mask = ~np.isinf(distances)
+#     return np.sqrt(np.mean(distances[valid_mask]**2))
+
+def compute_rmse_fine(source, traget, trans_matrix):
+    """计算全局RMSE（考虑所有对应点）"""
+    transformed_source = copy.deepcopy(source)
+    transformed_source.transform(trans_matrix)
+    dists = transformed_source.compute_point_cloud_distance(traget)
+    return np.sqrt(np.mean(np.square(dists)))
+
+
 def crop_cloud(cloud, ratio=0.9, axis=None):
     """
     对点云进行裁剪，保留指定比例的部分。
@@ -472,12 +489,11 @@ def error_fallback_data(initial_trans):
 
 
 def visualize_fine_results(source, target, fine_results, voxel_size=0.005):
-    """精配准可视化（兼容性修复版）"""
+    """精配准可视化"""
     # 预处理保持原逻辑
     source_ds = source.voxel_down_sample(voxel_size)
     target_ds = target.voxel_down_sample(voxel_size)
     
-    # 颜色代码保持之前约定
     colors = {
         "source": [1, 0, 0],     # 红: 源点云初始位置
         "result": [0, 0.5, 1],   # 蓝: 配准结果
@@ -505,12 +521,9 @@ def visualize_fine_results(source, target, fine_results, voxel_size=0.005):
         
         # 窗口标题携带主要指标
         title = f"精配准: {method_name} | "
-        title += f"Fitness:{result['fitness']:.2f} RMSE:{result['rmse']:.6f}"
+        title += f"RMSE:{result['rmse']:.6f}"
         
-        # 输出控制台帮助信息
-        print(f"正在显示: {method_name}")
-        print(f"指标详情: 耗时 {result['time']:.5f}s, 配准度 {result['fitness']:.3f}")
-        
+
         # 启动可视化
         o3d.visualization.draw_geometries(
             geometries,

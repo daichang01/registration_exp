@@ -7,6 +7,7 @@ import pandas as pd
 import open3d as o3d
 
 from src.utils import *
+from src.myalgorithms import *
 
 #############################################   对照实验 （粗配准）#############################################################
 
@@ -121,11 +122,24 @@ def execute_fast_global_registration(source_down, target_down, source_fpfh, targ
 
 
 
-##############################################   对照实验 （精配准）#############################################################
-def run_fine_experiment_single(source, target, coarse_result, voxel_size=0.005, max_iteration=100):
-    """
-    修复版：基于单个粗配准结果执行精配准实验
-    """
+
+def prepare_geometry_for_advanced_icp(pcd, voxel_size):
+    """修复版本：协方差估计"""
+    # 确保法线存在
+    if not pcd.has_normals():
+        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(
+            radius=voxel_size*2, max_nn=30))
+    
+    # 关键修复点：修改方法名为正确的estimate_covariances
+    if not pcd.has_covariances():
+        pcd.estimate_covariances(
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(  # 参数格式调整
+                radius=voxel_size*3,
+                max_nn=50
+            )
+        )
+    return pcd
+def run_fine_experiment_old(source, target, coarse_result, voxel_size=0.005, max_iteration=100):
     # 参数检查
     if coarse_result is None:
         raise ValueError("必须提供粗配准结果")
@@ -139,6 +153,8 @@ def run_fine_experiment_single(source, target, coarse_result, voxel_size=0.005, 
     # 结果字典初始化
     fine_results = {}
     initial_trans = coarse_result['transformation']
+
+
     # Generalized ICP 参数配置（需要协方差）
     gen_icp_config = {
         'method': 'GeneralizedICP',
@@ -151,7 +167,7 @@ def run_fine_experiment_single(source, target, coarse_result, voxel_size=0.005, 
             )
         }
     }
-    # 其他ICP方法配置
+
     methods = [
         {
             'method': 'PointToPlaneICP',
