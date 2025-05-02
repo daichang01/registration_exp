@@ -315,11 +315,12 @@ def bar_tw_icp_registration(source, target, init_transform=np.eye(4),
             bv_dist, bv_idx = source_kdtree.query(query_point, k=1, eps=0)
             if bv_idx == s_idx and bv_dist < tau:
                 valid_pairs.append( (s_idx, t_idx) )
+                # print(f"s_idx, t_idx:{s_idx, t_idx}")
         
         if len(valid_pairs) == 0:
             print(f"Iter {iteration}: 没有有效匹配点对!")
             break
-
+        print(f"len(valid_pairs):{len(valid_pairs)}")
         ### 阶段2: 计算残差与权重 ###
         src_corr = source_points[[p[0] for p in valid_pairs]]
         tgt_corr = target_points[[p[1] for p in valid_pairs]]
@@ -327,17 +328,21 @@ def bar_tw_icp_registration(source, target, init_transform=np.eye(4),
         # 应用当前变换
         transformed_src = np.dot(src_corr, current_transform[:3, :3].T) + current_transform[:3, 3]
         residuals = np.linalg.norm(transformed_src - tgt_corr, axis=1)
+        print(f"residuals:{residuals}")
         
         # 计算鲁棒权重：Tukey双权函数
         residual_scale = np.median(residuals)  # 更鲁棒的尺度估计
         sigma_current = max(sigma * (eta**iteration), 1e-6)  # 防止除以零
+        print(f"sigma_current:{sigma_current}")
         
         # Tukey权重计算
         adjusted_res = residuals / (c * sigma_current)
         weights = np.where(adjusted_res <= 1.0, 
                           (1 - adjusted_res**2)**2, 
                           0.0)  # Eq.(6)
+        print(f"weights:{weights}")
         total_weight = np.sum(weights)
+        print(f"total_weight:{total_weight}")
         if total_weight < 1e-7: 
             current_rmse = float('inf')  # 确保变量赋值
             print(f"Iter {iteration}: 权重极低，终止迭代")

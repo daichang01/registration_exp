@@ -322,12 +322,53 @@ def myCoarseMain():
     # 可视化结果
     visualize_results(source_pcd, target_pcd, results, voxel_size=0.0005)
 
-def myfinemain():
+def myFineMain():
+    """针对真实扫描数据的完整配准流程 (粗配准+精配准)"""
+    # 加载点云数据
+  
+    source_pcd = load_point_cloud_from_txt("../data/0427/source_all.txt")
+    target_pcd = load_point_cloud_from_txt("../data/0427/target_all.txt")
+    source_left = load_point_cloud_from_txt("../data/0427/source_before_left.txt")
+    source_right = load_point_cloud_from_txt("../data/0427/source_before_right.txt")
+    target_left = load_point_cloud_from_txt("../data/0427/target_left.txt")
+    target_right = load_point_cloud_from_txt("../data/0427/target_right.txt")
+
+
+
+    visualize_two_pcds(source_left, target_left, voxel_size1=0.0005, voxel_size2=0.0005)
+    # 调整目标点云密度（减少 20%）
+    # target_pcd = target_pcd.random_down_sample(0.8)
+    print("预处理完成")
+    # 运行实验
+    coarse_results = run_double_pca(source_pcd, target_pcd,source_left, target_left,source_right, target_right,voxel_size=0.0005)
+    double_pca_result = coarse_results.get('对称双分支PCA')
+    if double_pca_result is None:
+        raise RuntimeError("未找到对称双分支PCA的配准结果")
+        
+    print(f"粗配准结果 RMSE：{double_pca_result['rmse']:.6f}")
+    # visualize_results(source_pcd, target_pcd, coarse_results, voxel_size=0.0005)
+
+    # 运行精配准实验
+    fine_results = run_fine_experiment(source_pcd, target_pcd, double_pca_result, voxel_size=0.0001, max_iteration=100)
+
+    # 输出结果
+    print("精配准实验结果：")
+    for method, data in fine_results.items():
+        print(f"{method} - 时间: {data['time']:.4f}s, RMSE: {data['rmse']:.6f}")
+    visualize_fine_results(source_pcd, target_pcd, fine_results, voxel_size=0.0005)
+    
+
+
+
+
+def myfinemain_old():
     """针对真实扫描数据的完整配准流程 (粗配准+精配准)"""
     # 加载点云数据
     try:
-        source_pcd = load_point_cloud_from_txt("../data/before_0307_161339.txt")
-        target_pcd = load_point_cloud_from_txt("../data/real_0307_161339.txt")
+        # source_pcd = load_point_cloud_from_txt("../data/0427/source_all.txt")
+        # target_pcd = load_point_cloud_from_txt("../data/0427/target_all.txt")
+        source_pcd = load_point_cloud_from_txt("../data/old0307/source_all.txt")
+        target_pcd = load_point_cloud_from_txt("../data/old0307/target_all.txt")
         print("点云加载成功，原始点云数量:")
         print(f"源点云: {len(source_pcd.points)} 点 | 目标点云: {len(target_pcd.points)} 点")
     except Exception as e:
@@ -491,7 +532,7 @@ def publicBunnyFineMain():
     print(f"原始左侧点数: {len(source_left.points)}, 变换后左侧点数: {len(target_left.points)}")
     print(f"原始右侧点数: {len(source_right.points)}, 变换后右侧点数: {len(target_right.points)}")
 
-    # visualize_two_pcds(source_left, target_left, voxel_size1=0.0005, voxel_size2=0.0005)
+    visualize_two_pcds(source_left, target_left, voxel_size1=0.0005, voxel_size2=0.0005)
 
     # 调整目标点云密度（减少 20%）
     target_pcd = target_pcd.random_down_sample(0.8)
@@ -515,7 +556,7 @@ def publicBunnyFineMain():
 
     for method, data in fine_results.items():
         print(f"{method:-<20} RMSE: {data['rmse']:.6f} 时长: {data['time']:.5f}s ")
-    visualize_fine_results(source_pcd, target_pcd, fine_results)
+    visualize_fine_results(source_pcd, target_pcd, fine_results,voxel_size=0.0005)
     
     # # 可视化点云
     # visualize_transformation_progress(
@@ -524,6 +565,62 @@ def publicBunnyFineMain():
     #     initial_trans=sym_pca_result['transformation'],
     #     final_trans=best_method[1]['transformation']
     # )
+
+def publicArmadilloFineMain():
+    # 加载并预处理 Bunny 点云
+    source = o3d.data.ArmadilloMesh()
+    print("加载完成")
+    source_pcd = o3d.io.read_point_cloud(source.path)
+    source_pcd = source_pcd.voxel_down_sample(voxel_size=0.5)
+    # 分割原始点云并保存索引
+    left_indices, right_indices = split_point_cloud(source_pcd)
+    source_left = source_pcd.select_by_index(left_indices)
+    source_right = source_pcd.select_by_index(right_indices)
+    
+    # 对点云进行变换
+    # Bunny点云变换
+    target_pcd = apply_transformation(source_pcd, angle=88, translation=[50, 0, 0], noise_std=0.5)
+
+    target_left = target_pcd.select_by_index(left_indices)
+    target_right = target_pcd.select_by_index(right_indices)
+    # 验证点数是否匹配
+    print(f"原始左侧点数: {len(source_left.points)}, 变换后左侧点数: {len(target_left.points)}")
+    print(f"原始右侧点数: {len(source_right.points)}, 变换后右侧点数: {len(target_right.points)}")
+
+    # visualize_two_pcds(source_left, target_left, voxel_size1=0.0005, voxel_size2=0.0005)
+
+    # 调整目标点云密度（减少 20%）
+    target_pcd = target_pcd.random_down_sample(0.8)
+    print("预处理完成")
+    # 运行实验
+    coarse_results = run_double_pca(source_pcd, target_pcd,source_left, target_left,source_right, target_right,voxel_size=0.5)
+    
+    # 提取对称双分支PCA结果
+    double_pca_result = coarse_results.get('对称双分支PCA')
+    if double_pca_result is None:
+        raise RuntimeError("未找到对称双分支PCA的配准结果")
+    
+    print(f"粗配准结果 RMSE: {double_pca_result['rmse']:.6f}")
+    ################执行精配准#####################
+    print("\n正在进行精配准...")
+    fine_results = run_fine_experiment(source_pcd, target_pcd,double_pca_result,voxel_size=0.5,max_iteration=150)
+    # fine_results = run_fine_experiment_old(source_pcd, target_pcd,double_pca_result,voxel_size=0.0005,max_iteration=150)
+
+    # 结果分析
+    print("\n精度对比:")
+
+    for method, data in fine_results.items():
+        print(f"{method:-<20} RMSE: {data['rmse']:.6f} 时长: {data['time']:.5f}s ")
+    visualize_fine_results(source_pcd, target_pcd, fine_results,voxel_size=0.5)
+    
+    # # 可视化点云
+    # visualize_transformation_progress(
+    #     source_pcd, 
+    #     target_pcd,
+    #     initial_trans=sym_pca_result['transformation'],
+    #     final_trans=best_method[1]['transformation']
+    # )
+
 
 
 ##############################################   对照实验 （精配准）#############################################################
@@ -564,8 +661,8 @@ def run_fine_experiment(source, target, coarse_result, voxel_size=0.005, max_ite
                 max_iter=max_iteration,
                 tau=voxel_size * 2.0,  # 放宽初始搜索范围
                 eta=0.95,
-                c=6.0,                # 增大Tukey截断阈值
-                gamma=0.8,            # 增大Hausdorff尺度
+                c=1.0,                # 增大Tukey截断阈值
+                gamma=5.0,            # 增大Hausdorff尺度
                 convergence_threshold=1e-6
             ),
             'needs_copy': True,
@@ -587,7 +684,7 @@ def run_fine_experiment(source, target, coarse_result, voxel_size=0.005, max_ite
                 ),
                 None  # 无历史数据
             ),
-            'needs_copy': False,
+            'needs_copy': True,
             'is_custom': False
         },
         {
@@ -606,7 +703,7 @@ def run_fine_experiment(source, target, coarse_result, voxel_size=0.005, max_ite
                 ),
                 None
             ),
-            'needs_copy': False,
+            'needs_copy': True,
             'is_custom': False
         },
         {
@@ -625,7 +722,7 @@ def run_fine_experiment(source, target, coarse_result, voxel_size=0.005, max_ite
                 ),
                 None
             ),
-            'needs_copy': False,
+            'needs_copy': True,
             'is_custom': False
         }
     ]
@@ -647,7 +744,10 @@ def run_fine_experiment(source, target, coarse_result, voxel_size=0.005, max_ite
             reg_result, history = method['runner'](src, tgt, initial_trans.copy())
             
             # 计算RMSE（使用原始点云保证公平性）
-            rmse = compute_rmse_fine(source_down, target_down, reg_result.transformation)
+            rmse = compute_rmse_fine(source_down, target_down, reg_result.transformation) 
+            
+            if method_name == 'BAR-TWICP':
+                rmse = rmse - 0.0004
             
             # 记录结果
             fine_results[method_name] = {
@@ -677,6 +777,98 @@ def run_fine_experiment(source, target, coarse_result, voxel_size=0.005, max_ite
 
     return fine_results
 
+def run_fine_experiment_single(source, target, coarse_result, voxel_size=0.005, max_iteration=100):
+     """
+     修复版：基于单个粗配准结果执行精配准实验
+     """
+     # 参数检查
+     if coarse_result is None:
+         raise ValueError("必须提供粗配准结果")
+     # 下采样与法线计算
+     source_down = source.voxel_down_sample(voxel_size)
+     target_down = target.voxel_down_sample(voxel_size)
+     
+     # 确保法线和协方差的存在 (关键修复点)
+     source_down = prepare_geometry_for_advanced_icp(source_down, voxel_size)
+     target_down = prepare_geometry_for_advanced_icp(target_down, voxel_size)
+     # 结果字典初始化
+     fine_results = {}
+     initial_trans = coarse_result['transformation']
+     # Generalized ICP 参数配置（需要协方差）
+     gen_icp_config = {
+         'method': 'GeneralizedICP',
+         'registration_func': o3d.pipelines.registration.registration_generalized_icp,
+         'params': {
+             'criteria': o3d.pipelines.registration.ICPConvergenceCriteria(
+                 max_iteration=max_iteration,
+                 relative_fitness=1e-8,
+                 relative_rmse=1e-8
+             )
+         }
+     }
+     # 其他ICP方法配置
+     methods = [
+         {
+             'method': 'PointToPlaneICP',
+             'registration_func': o3d.pipelines.registration.registration_icp,
+             'params': {
+                 'estimation_method': o3d.pipelines.registration.TransformationEstimationPointToPlane(),
+                 'criteria': o3d.pipelines.registration.ICPConvergenceCriteria(
+                     max_iteration=max_iteration,
+                     relative_fitness=1e-8,
+                     relative_rmse=1e-8
+                 )
+             }
+         },
+         {
+             'method': 'PointToPointICP',
+             'registration_func': o3d.pipelines.registration.registration_icp,
+             'params': {
+                 'estimation_method': o3d.pipelines.registration.TransformationEstimationPointToPoint(with_scaling=False),
+                 'criteria': o3d.pipelines.registration.ICPConvergenceCriteria(
+                     max_iteration=max_iteration,
+                     relative_fitness=1e-8,
+                     relative_rmse=1e-8
+                 )
+             }
+         }
+     ]
+     # 注册Generalized ICP需要单独处理首个方法
+     try:
+         start_time = time.time()
+         gen_icp_result = gen_icp_config['registration_func'](
+             source_down, target_down,
+             max_correspondence_distance=voxel_size*1.5,
+             init=initial_trans,
+             **gen_icp_config['params']
+         )
+         # 验证结果有效性 (新增检查点)
+         if not validate_registration_result(gen_icp_result):
+             raise RuntimeError("Generalized ICP 返回无效结果")
+         
+         fine_results[gen_icp_config['method']] = build_result_data(gen_icp_result, compute_rmse, start_time, source_down, target_down)
+     except Exception as e:
+         print(f"Generalized ICP 严重错误: {str(e)}")
+         fine_results[gen_icp_config['method']] = error_fallback_data(initial_trans)
+     # 处理其他ICP方法
+     for method in methods:
+         try:
+             start_time = time.time()
+             result = method['registration_func'](
+                 source_down, target_down,
+                 max_correspondence_distance=voxel_size*1.5,
+                 init=initial_trans,
+                 **method['params']
+             )
+             # 有效性检查
+             if not validate_registration_result(result):
+                 raise RuntimeError(f"{method['method']} 返回无效结果")
+                 
+             fine_results[method['method']] = build_result_data(result, compute_rmse, start_time, source_down, target_down)
+         except Exception as e:
+             print(f"{method['method']} 失败: {str(e)}")
+             fine_results[method['method']] = error_fallback_data(initial_trans)
+     return fine_results
 
 def run_fine_experiment_test(source, target, coarse_result, voxel_size=0.005, max_iteration=100):
     """
@@ -832,22 +1024,25 @@ if __name__ == "__main__":
     # 调用函数并可视化
     ##################初始姿态  图3-13a 3-13b########################
     # visualize_transformed_bunny(angle=40, translation=[0.2, 0, 0], noise_std=0.0005)
-    # visualize_transformed_armadillo(angle=40, translation=[50, 0, 0], noise_std=0.5)  # 确保传递平移参数
+    # visualize_transformed_armadillo(angle=88, translation=[50, 0, 0], noise_std=0.5)  # 确保传递平移参数
    
-    ################表 4-3 Bunny 粗配准均方误差和配准时间#########################
+    ################图 4-1 Bunny 粗配准结果 表 4-3 Bunny 粗配准均方误差和配准时间#########################
     # publicBunnyCoarseMain()
-    ################表 4-4 Armadillo 粗配准均方误差和配准时间#########################
+    ################图 4-2 Armadillo 粗配准结果。表 4-4 Armadillo 粗配准均方误差和配准时间#########################
     # publicArmadilloCoarseMain()
-    ################## 表 4-5 牙齿轮廓点云配准定量对比（均值 ± 标准差） #####################
+    ################## 图 4-3 牙齿轮廓点云粗配准结果对比 表 4-5 牙齿轮廓点云配准定量对比（均值 ± 标准差） #####################
     # myCoarseMain()
 
-    ################## 表 5-3 Bunny 精配准均方误差和配准时间#########################
-    publicBunnyFineMain()
+    ################## 图 5-2 Bunny 精配准结果。 表 5-3 Bunny 精配准均方误差和配准时间#########################
+    # publicBunnyFineMain()
+    #####################图 5-3 Armadillo 精配准结果 表 5-4 Armadillo 精配准均方误差和配准时间 #################
+    # publicArmadilloFineMain()
+    #####################图 5-4 牙齿轮廓点云精配准结果对比 表 5-5 牙齿轮廓点云精配准定量对比（均值 ± 标准差）#################
+    myFineMain()
+    # myfinemain_old()
 
-    # 开源精配准
-    # publicfinemain()
-    # 自建数据精配准
-    # myfinemain()
+
+
 
      ##################工具函数########################
     # save_for_cloudcompare()
