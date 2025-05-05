@@ -40,7 +40,7 @@ def run_experiment_new(source, target, source_left, target_left,source_right,tar
     start_time = time.time()
     pca_transformation = traditional_pca_registration_no(source_ds, target_ds)
     # print(f"pca_trasformation: {pca_transformation}")
-    pca_time = time.time() - start_time
+    pca_time = time.time() - start_time 
     source_pca = copy.deepcopy(source_ds)
     source_pca.transform(pca_transformation)
     pca_rmse = compute_rmse(source_pca, target_ds)
@@ -745,7 +745,7 @@ def run_fine_experiment(source, target, coarse_result, voxel_size=0.005, max_ite
             
             # 计算RMSE（使用原始点云保证公平性）
             rmse = compute_rmse_fine(source_down, target_down, reg_result.transformation) 
-            
+
             if method_name == 'BAR-TWICP':
                 rmse = rmse - 0.0004
             
@@ -1027,7 +1027,7 @@ if __name__ == "__main__":
     # visualize_transformed_armadillo(angle=88, translation=[50, 0, 0], noise_std=0.5)  # 确保传递平移参数
    
     ################图 4-1 Bunny 粗配准结果 表 4-3 Bunny 粗配准均方误差和配准时间#########################
-    # publicBunnyCoarseMain()
+    publicBunnyCoarseMain()
     ################图 4-2 Armadillo 粗配准结果。表 4-4 Armadillo 粗配准均方误差和配准时间#########################
     # publicArmadilloCoarseMain()
     ################## 图 4-3 牙齿轮廓点云粗配准结果对比 表 4-5 牙齿轮廓点云配准定量对比（均值 ± 标准差） #####################
@@ -1038,8 +1038,8 @@ if __name__ == "__main__":
     #####################图 5-3 Armadillo 精配准结果 表 5-4 Armadillo 精配准均方误差和配准时间 #################
     # publicArmadilloFineMain()
     #####################图 5-4 牙齿轮廓点云精配准结果对比 表 5-5 牙齿轮廓点云精配准定量对比（均值 ± 标准差）#################
-    myFineMain()
-    # myfinemain_old()
+    # myFineMain()
+
 
 
 
