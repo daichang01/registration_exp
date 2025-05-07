@@ -5,6 +5,9 @@ import sys
 import os
 import pandas as pd
 import open3d as o3d
+# os.environ["OPEN3D_NUM_THREADS"] = "1"  # 强制单线程
+
+
 
 # 将项目根目录添加到 Python 路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -24,7 +27,7 @@ def run_experiment_new(source, target, source_left, target_left,source_right,tar
     # 预处理点云数据
     source_ds, target_ds, source_fpfh, target_fpfh = prepare_dataset(source, target, voxel_size)
     
-    # 对称双分支 PCA 配准
+    # 双分支独立 PCA 配准
     start_time = time.time()
     pca_double_trasformation = pca_double_adjust(source_ds, target_ds,source_left, target_left,source_right,target_right)
     # pca_double_trasformation = traditional_pca_registration(source_ds, target_ds)
@@ -32,7 +35,7 @@ def run_experiment_new(source, target, source_left, target_left,source_right,tar
     source_double = copy.deepcopy(source_ds)
     source_double.transform(pca_double_trasformation)
     double_rmse = compute_rmse(source_double, target_ds)
-    results['对称双分支PCA'] = {'time': double_time, 'rmse': double_rmse, 'transformation': pca_double_trasformation}
+    results['双分支独立PCA'] = {'time': double_time, 'rmse': double_rmse, 'transformation': pca_double_trasformation}
 
 
     
@@ -81,7 +84,7 @@ def run_double_pca(source, target, source_left, target_left,source_right,target_
     # 预处理点云数据
     source_ds, target_ds, source_fpfh, target_fpfh = prepare_dataset(source, target, voxel_size)
     
-    # 对称双分支 PCA 配准
+    # 双分支独立 PCA 配准
     start_time = time.time()
     pca_double_trasformation = pca_double_adjust(source_ds, target_ds,source_left, target_left,source_right,target_right)
     # pca_double_trasformation = traditional_pca_registration(source_ds, target_ds)
@@ -89,7 +92,7 @@ def run_double_pca(source, target, source_left, target_left,source_right,target_
     source_double = copy.deepcopy(source_ds)
     source_double.transform(pca_double_trasformation)
     double_rmse = compute_rmse(source_double, target_ds)
-    results['对称双分支PCA'] = {'time': double_time, 'rmse': double_rmse, 'transformation': pca_double_trasformation}
+    results['双分支独立PCA'] = {'time': double_time, 'rmse': double_rmse, 'transformation': pca_double_trasformation}
     return results
 
 def run_experiment(source, target, voxel_size=0.05):
@@ -102,14 +105,14 @@ def run_experiment(source, target, voxel_size=0.05):
     source_ds, target_ds, source_fpfh, target_fpfh = prepare_dataset(source, target, voxel_size)
     
 
-    # 对称双分支 PCA 配准
+    # 双分支独立 PCA 配准
     start_time = time.time()
     pca_transformation = traditional_pca_registration(source_ds, target_ds)
     pca_time = time.time() - start_time
     source_pca = copy.deepcopy(source_ds)
     source_pca.transform(pca_transformation)
     pca_rmse = compute_rmse(source_pca, target_ds)
-    results['对称双分支PCA'] = {'time': pca_time, 'rmse': pca_rmse, 'transformation': pca_transformation}
+    results['双分支独立PCA'] = {'time': pca_time, 'rmse': pca_rmse, 'transformation': pca_transformation}
     
     # 传统 PCA 配准
     start_time = time.time()
@@ -151,7 +154,7 @@ def visualize_regis(source, target, transformation, title,voxel_size=0.05):
     source_ds.paint_uniform_color([1, 0, 0])  # 红色：源点云
     target_ds.paint_uniform_color([0, 1, 0])  # 绿色：目标点云
 
-    # 可视化 对称双分支PCA 结果
+    # 可视化 双分支独立PCA 结果
     source_pca = copy.deepcopy(source_ds)
     source_pca.transform(transformation)
     source_pca.paint_uniform_color([0, 0, 1])  # 蓝色：PCA 配准结果
@@ -176,13 +179,13 @@ def visualize_results(source, target, results, voxel_size=0.05):
     source_ds.paint_uniform_color([1, 0, 0])  # 红色：源点云
     target_ds.paint_uniform_color([0, 1, 0])  # 绿色：目标点云
 
-    # 可视化 对称双分支PCA 结果
+    # 可视化 双分支独立PCA 结果
     source_pca = copy.deepcopy(source_ds)
-    source_pca.transform(results['对称双分支PCA']['transformation'])
+    source_pca.transform(results['双分支独立PCA']['transformation'])
     source_pca.paint_uniform_color([0, 0, 1])  # 蓝色：PCA 配准结果
     o3d.visualization.draw_geometries(
         [source_pca, target_ds],
-        window_name="对称双分支PCA 配准结果",
+        window_name="双分支独立PCA 配准结果",
         width=1024,
         height=768
     )
@@ -341,9 +344,9 @@ def myFineMain():
     print("预处理完成")
     # 运行实验
     coarse_results = run_double_pca(source_pcd, target_pcd,source_left, target_left,source_right, target_right,voxel_size=0.0005)
-    double_pca_result = coarse_results.get('对称双分支PCA')
+    double_pca_result = coarse_results.get('双分支独立PCA')
     if double_pca_result is None:
-        raise RuntimeError("未找到对称双分支PCA的配准结果")
+        raise RuntimeError("未找到双分支独立PCA的配准结果")
         
     print(f"粗配准结果 RMSE：{double_pca_result['rmse']:.6f}")
     # visualize_results(source_pcd, target_pcd, coarse_results, voxel_size=0.0005)
@@ -387,9 +390,9 @@ def myfinemain_old():
         coarse_results = run_experiment(source_pcd, target_pcd, voxel_size=voxel_size)
         
          # 提取双分支PCA结果
-        sym_pca_result = coarse_results.get('对称双分支PCA')
+        sym_pca_result = coarse_results.get('双分支独立PCA')
         if sym_pca_result is None:
-            raise RuntimeError("未找到对称双分支PCA的配准结果")
+            raise RuntimeError("未找到双分支独立PCA的配准结果")
         # ====== 新增：粗配准结果可视化 ======
         print("\n正在显示粗配准后效果对比...")
         # 应用最优变换矩阵到源点云（创建副本避免修改原始数据）
@@ -475,10 +478,10 @@ def publicfinemain():
     # 运行粗配准实验
     print("\n正在进行粗配准...")
     coarse_results = run_experiment(source_pcd, target_pcd, voxel_size=0.5)
-    # 提取对称双分支PCA结果
-    sym_pca_result = coarse_results.get('对称双分支PCA')
+    # 提取双分支独立PCA结果
+    sym_pca_result = coarse_results.get('双分支独立PCA')
     if sym_pca_result is None:
-        raise RuntimeError("未找到对称双分支PCA的配准结果")
+        raise RuntimeError("未找到双分支独立PCA的配准结果")
     
 
     
@@ -540,10 +543,10 @@ def publicBunnyFineMain():
     # 运行实验
     coarse_results = run_double_pca(source_pcd, target_pcd,source_left, target_left,source_right, target_right,voxel_size=0.0005)
     
-    # 提取对称双分支PCA结果
-    double_pca_result = coarse_results.get('对称双分支PCA')
+    # 提取双分支独立PCA结果
+    double_pca_result = coarse_results.get('双分支独立PCA')
     if double_pca_result is None:
-        raise RuntimeError("未找到对称双分支PCA的配准结果")
+        raise RuntimeError("未找到双分支独立PCA的配准结果")
     
     print(f"粗配准结果 RMSE: {double_pca_result['rmse']:.6f}")
     ################执行精配准#####################
@@ -595,10 +598,10 @@ def publicArmadilloFineMain():
     # 运行实验
     coarse_results = run_double_pca(source_pcd, target_pcd,source_left, target_left,source_right, target_right,voxel_size=0.5)
     
-    # 提取对称双分支PCA结果
-    double_pca_result = coarse_results.get('对称双分支PCA')
+    # 提取双分支独立PCA结果
+    double_pca_result = coarse_results.get('双分支独立PCA')
     if double_pca_result is None:
-        raise RuntimeError("未找到对称双分支PCA的配准结果")
+        raise RuntimeError("未找到双分支独立PCA的配准结果")
     
     print(f"粗配准结果 RMSE: {double_pca_result['rmse']:.6f}")
     ################执行精配准#####################
@@ -1027,14 +1030,14 @@ if __name__ == "__main__":
     # visualize_transformed_armadillo(angle=88, translation=[50, 0, 0], noise_std=0.5)  # 确保传递平移参数
    
     ################图 4-1 Bunny 粗配准结果 表 4-3 Bunny 粗配准均方误差和配准时间#########################
-    publicBunnyCoarseMain()
+    # publicBunnyCoarseMain()
     ################图 4-2 Armadillo 粗配准结果。表 4-4 Armadillo 粗配准均方误差和配准时间#########################
     # publicArmadilloCoarseMain()
     ################## 图 4-3 牙齿轮廓点云粗配准结果对比 表 4-5 牙齿轮廓点云配准定量对比（均值 ± 标准差） #####################
     # myCoarseMain()
 
     ################## 图 5-2 Bunny 精配准结果。 表 5-3 Bunny 精配准均方误差和配准时间#########################
-    # publicBunnyFineMain()
+    publicBunnyFineMain()
     #####################图 5-3 Armadillo 精配准结果 表 5-4 Armadillo 精配准均方误差和配准时间 #################
     # publicArmadilloFineMain()
     #####################图 5-4 牙齿轮廓点云精配准结果对比 表 5-5 牙齿轮廓点云精配准定量对比（均值 ± 标准差）#################

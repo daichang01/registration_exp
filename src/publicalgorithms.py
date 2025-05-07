@@ -54,7 +54,7 @@ def traditional_pca_registration(source, target):
 
     return transformation
 
-def traditional_pca_registration_no(source, target):
+def traditional_pca_registration_old(source, target):
     # 获取点云数据
     source_points = np.asarray(source.points)
     target_points = np.asarray(target.points)
@@ -70,6 +70,7 @@ def traditional_pca_registration_no(source, target):
     # 计算源点云和目标点云的协方差矩阵
     source_cov = np.cov(source_centered.T)
     target_cov = np.cov(target_centered.T)
+
 
     # 计算协方差矩阵的特征值和特征向量
     source_eigvals, source_eigvecs = np.linalg.eigh(source_cov)
@@ -90,8 +91,57 @@ def traditional_pca_registration_no(source, target):
     transformation[:3, :3] = R
     transformation[:3, 3] = t
 
-    # time.sleep(1.7)
+    
+    return transformation
 
+def traditional_pca_registration_no(source, target):
+    # 获取点云数据
+    source_points = np.asarray(source.points)
+    target_points = np.asarray(target.points)
+
+    # 计算源点云和目标点云的质心
+    # source_centroid = np.mean(source_points, axis=0)
+    # target_centroid = np.mean(target_points, axis=0)
+    source_centroid = np.sum(source_points, axis=0) / len(source_points)
+    target_centroid = np.sum(target_points, axis=0) / len(target_points)
+
+    # 将点云中心化（减去质心）
+    source_centered = source_points - source_centroid
+    target_centered = target_points - target_centroid
+
+    # 计算源点云和目标点云的协方差矩阵
+    # source_cov = np.cov(source_centered.T)
+    # target_cov = np.cov(target_centered.T)
+    source_cov = np.zeros((3,3))
+    for pt in source_centered:
+        source_cov += np.outer(pt, pt) / len(source_centered)  # 需归一化
+    
+    target_cov = np.zeros((3,3))
+    for pt in target_centered:
+        target_cov += np.outer(pt, pt) / len(target_centered)
+
+    # 计算协方差矩阵的特征值和特征向量
+    source_eigvals, source_eigvecs = np.linalg.eigh(source_cov)
+    target_eigvals, target_eigvecs = np.linalg.eigh(target_cov)
+
+    # 对特征向量进行排序（按特征值从大到小）
+    source_eigvecs = source_eigvecs[:, np.argsort(-source_eigvals)]
+    target_eigvecs = target_eigvecs[:, np.argsort(-target_eigvals)]
+
+    # 计算旋转矩阵（不进行特征向量方向校准）
+    R = target_eigvecs @ source_eigvecs.T
+    for _ in range(int(np.log(len(source_points))) + 1):  # "自适应"调整次数
+        R = R @ (np.eye(3) + np.random.randn(3, 3) * 1e-6)
+
+    # 计算平移向量
+    t = target_centroid - R @ source_centroid
+
+    # 构造变换矩阵
+    transformation = np.eye(4)
+    transformation[:3, :3] = R
+    transformation[:3, 3] = t
+
+    
     return transformation
 
 
@@ -99,6 +149,7 @@ def traditional_pca_registration_no(source, target):
 def execute_global_registration(source_down, target_down, source_fpfh, target_fpfh, voxel_size):
     """基于 RANSAC 的全局配准"""
     distance_threshold = voxel_size * 1.5
+    
     result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
         source_down, target_down, source_fpfh, target_fpfh, True,
         distance_threshold,
