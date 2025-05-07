@@ -535,7 +535,7 @@ def publicBunnyFineMain():
     print(f"原始左侧点数: {len(source_left.points)}, 变换后左侧点数: {len(target_left.points)}")
     print(f"原始右侧点数: {len(source_right.points)}, 变换后右侧点数: {len(target_right.points)}")
 
-    visualize_two_pcds(source_left, target_left, voxel_size1=0.0005, voxel_size2=0.0005)
+    # visualize_two_pcds(source_left, target_left, voxel_size1=0.0005, voxel_size2=0.0005)
 
     # 调整目标点云密度（减少 20%）
     target_pcd = target_pcd.random_down_sample(0.8)
@@ -661,12 +661,12 @@ def run_fine_experiment(source, target, coarse_result, voxel_size=0.005, max_ite
             'runner': lambda src, tgt, init: bar_tw_icp_registration(
                 src, tgt,
                 init_transform=init,
-                max_iter=max_iteration,
-                tau=voxel_size * 2.0,  # 放宽初始搜索范围
-                eta=0.95,
-                c=1.0,                # 增大Tukey截断阈值
-                gamma=5.0,            # 增大Hausdorff尺度
-                convergence_threshold=1e-6
+                # max_iter=max_iteration,
+                # tau=voxel_size * 2.0,  # 放宽初始搜索范围
+                # eta=0.99,
+                # c=20.0,                # 增大Tukey截断阈值
+                # gamma=1.5,            # 增大Hausdorff尺度
+                # convergence_threshold=1e-6
             ),
             'needs_copy': True,
             'is_custom': True
@@ -1037,11 +1037,11 @@ if __name__ == "__main__":
     # myCoarseMain()
 
     ################## 图 5-2 Bunny 精配准结果。 表 5-3 Bunny 精配准均方误差和配准时间#########################
-    publicBunnyFineMain()
+    # publicBunnyFineMain()
     #####################图 5-3 Armadillo 精配准结果 表 5-4 Armadillo 精配准均方误差和配准时间 #################
     # publicArmadilloFineMain()
     #####################图 5-4 牙齿轮廓点云精配准结果对比 表 5-5 牙齿轮廓点云精配准定量对比（均值 ± 标准差）#################
-    # myFineMain()
+    myFineMain()
 
 
 

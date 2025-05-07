@@ -9,6 +9,7 @@ from sklearn.decomposition import PCA
 from pyquaternion import Quaternion
 from joblib import Parallel, delayed
 from numba import njit
+from sklearn.utils.extmath import randomized_svd
 
 from src.utils import *
 
@@ -354,7 +355,251 @@ def pca_double_adjust(source_cloud, target_cloud, source_pca, target_pca,source_
 
 
 
-def bar_tw_icp_registration(source, target, init_transform=np.eye(4), 
+def bar_tw_icp_registration(source, target, init_transform=np.eye(4),
+                          max_iter=30, tau=0.3, convergence_threshold=1e-6,
+                          debug_level=1):
+    """
+    双向验证的ICP配准算法
+    参数说明：
+    source/target: Open3D点云对象
+    init_transform: 初始变换矩阵(4x4)
+    tau: 距离阈值
+    debug_level: 0=无输出, 1=基础信息, 2=详细匹配信息
+    """
+    # 深拷贝并应用初始变换
+    source_temp = copy.deepcopy(source).transform(init_transform)
+    src_points = np.asarray(source_temp.points)
+    tgt_points = np.asarray(target.points)
+    
+    if debug_level > 0:
+        print("\n=== ICP配准初始化 ===")
+        print(f"源点云数量: {len(src_points)}, 目标点云数量: {len(tgt_points)}")
+        print(f"参数: max_iter={max_iter}, tau={tau}, conv_thresh={convergence_threshold}")
+
+    # 构建KDTree（预编译优化）
+    tgt_kdtree = cKDTree(tgt_points, compact_nodes=False, balanced_tree=False)
+    src_kdtree = cKDTree(src_points, compact_nodes=False, balanced_tree=False)
+    current_transform = init_transform.copy()
+    history = []
+
+    for iter in range(max_iter):
+        if debug_level > 0:
+            print(f"\n--- 迭代 {iter+1}/{max_iter} ---")
+
+        ### ========== 阶段1: 双向验证 ========== ###
+        # 1. 批量前向查询（source->target）
+        _, fw_idx = tgt_kdtree.query(src_points, k=1, workers=-1)
+        
+        # 2. 批量反向验证（target->source）
+        candidate_tgt_points = tgt_points[fw_idx]
+        _, bv_idx = src_kdtree.query(candidate_tgt_points, k=1, workers=-1)
+        
+        # 3. 向量化条件判断
+        s_indices = np.arange(len(src_points))
+        sq_distances = np.sum((src_points - candidate_tgt_points)**2, axis=1)
+        valid_mask = (bv_idx == s_indices) & (sq_distances < tau**2)
+        valid_pairs = np.column_stack((s_indices[valid_mask], fw_idx[valid_mask])).tolist()
+        
+        # 有效性检查
+        if len(valid_pairs) < 50:
+            print(f"⚠️ 警告: 仅有 {len(valid_pairs)} 对有效点 (<50), 终止迭代")
+            break
+            
+        if debug_level > 0:
+            valid_ratio = len(valid_pairs)/min(len(src_points),len(tgt_points))*100
+            print(f"有效匹配对数: {len(valid_pairs)} (占比{valid_ratio:.1f}%)")
+            if debug_level > 1:
+                valid_distances = np.sqrt(sq_distances[valid_mask])
+                for (s_idx, t_idx), dist in zip(valid_pairs, valid_distances):
+                    print(f"匹配点: src[{s_idx}]->tgt[{t_idx}], 距离={dist:.4f}")
+
+        ### ========== 阶段2: SVD求解 ========== ###
+        src_corr = src_points[np.asarray(valid_pairs)[:,0]]
+        tgt_corr = tgt_points[np.asarray(valid_pairs)[:,1]]
+        
+        # 1. 快速质心计算
+        src_centroid = np.mean(src_corr, axis=0)
+        tgt_centroid = np.mean(tgt_corr, axis=0)
+        
+        # 2. 协方差矩阵计算加速
+        H = (src_corr - src_centroid).T @ (tgt_corr - tgt_centroid)
+        
+        # 3. 分支SVD优化
+        if H.shape == (3,3):
+            U, S, VT = np.linalg.svd(H)
+        else:
+            U, S, VT = randomized_svd(H, n_components=3)
+        
+        # 计算旋转矩阵
+        R = VT.T @ U.T
+        if np.linalg.det(R) < 0:
+            VT[-1,:] *= -1
+            R = VT.T @ U.T
+        t = tgt_centroid - R @ src_centroid
+
+        # 4. 更新变换矩阵
+        delta_T = np.eye(4)
+        delta_T[:3,:3] = R
+        delta_T[:3,3] = t
+        current_transform = delta_T @ current_transform
+
+        # 误差计算
+        transformed_src = (R @ src_corr.T).T + t
+        residuals = np.linalg.norm(transformed_src - tgt_corr, axis=1)
+        current_rmse = np.sqrt(np.mean(residuals**2))
+        history.append({
+            'iter': iter,
+            'rmse': current_rmse,
+            'valid_pairs': len(valid_pairs)
+        })
+
+        # 收敛判断（支持首次迭代终止）
+        if iter == 0:
+            initial_rmse = current_rmse
+        delta_error = abs(history[-2]['rmse']-current_rmse) if iter>0 else initial_rmse
+        if delta_error < convergence_threshold:
+            if debug_level > 0:
+                print(f"✅ 收敛于迭代 {iter+1}, RMSE变化{delta_error:.2e}<{convergence_threshold}")
+            break
+
+    result = o3d.pipelines.registration.RegistrationResult()
+    result.transformation = current_transform
+    result.inlier_rmse = history[-1]['rmse'] if history else float('inf')
+    result.fitness = len(valid_pairs)/min(len(src_points),len(tgt_points))
+    
+    if debug_level > 0:
+        print("\n=== 配准结果 ===")
+        print(f"最终变换矩阵:\n{np.round(current_transform, 4)}")
+        print(f"RMSE: {result.inlier_rmse:.6f}, 匹配率: {result.fitness*100:.1f}%")
+
+    return result, history
+
+
+
+def bar_tw_icp_registration_slow(source, target, init_transform=np.eye(4), 
+                          max_iter=30, tau=0.3, convergence_threshold=1e-6,
+                          debug_level=1):
+    """
+    带调试输出的简化版精配准ICP（支持首次迭代即停止）
+    
+    修改点：
+    1. 收敛判断不再要求 iter>5 的条件
+    2. 首次迭代若满足阈值立即终止
+    """
+    source_temp = copy.deepcopy(source).transform(init_transform)
+    src_points = np.asarray(source_temp.points)
+    tgt_points = np.asarray(target.points)
+    
+    if debug_level > 0:
+        print("\n=== ICP配准初始化 ===")
+        print(f"源点云数量: {len(src_points)}, 目标点云数量: {len(tgt_points)}")
+        print(f"初始变换矩阵:\n{np.round(init_transform, 4)}")
+        print(f"参数: max_iter={max_iter}, tau={tau}, conv_thresh={convergence_threshold}")
+
+    # 构建KDTree
+    tgt_kdtree = cKDTree(tgt_points)
+    src_kdtree = cKDTree(src_points)
+    current_transform = init_transform.copy()
+    history = []
+
+    for iter in range(max_iter):
+        if debug_level > 0:
+            print(f"\n--- 迭代 {iter+1}/{max_iter} ---")
+
+        ### 阶段1: 双向验证 ###
+        _, fw_idx = tgt_kdtree.query(src_points, k=1)
+        fw_pairs = list(zip(range(len(src_points)), fw_idx))
+        
+        valid_pairs = []
+        for s_idx, t_idx in fw_pairs:
+            _, bv_idx = src_kdtree.query(tgt_points[t_idx], k=1)
+            dist = np.linalg.norm(src_points[s_idx]-tgt_points[t_idx])
+            if bv_idx == s_idx and dist < tau:
+                valid_pairs.append((s_idx, t_idx))
+                
+                if debug_level > 1:
+                    print(f"有效匹配: src[{s_idx}] -> tgt[{t_idx}], 距离={dist:.4f}")
+
+        if len(valid_pairs) < 50:
+            print(f"⚠️ 警告: 仅有 {len(valid_pairs)} 对有效点 (<50), 终止迭代")
+            break
+            
+        if debug_level > 0:
+            print(f"有效匹配对数: {len(valid_pairs)} "
+                 f"(占总点数的 {len(valid_pairs)/min(len(src_points),len(tgt_points))*100:.1f}%)")
+
+        ### 阶段2: SVD求解 ###
+        src_corr = src_points[[p[0] for p in valid_pairs]]
+        tgt_corr = tgt_points[[p[1] for p in valid_pairs]]
+
+        src_centroid = np.mean(src_corr, axis=0)
+        tgt_centroid = np.mean(tgt_corr, axis=0)
+        
+        if debug_level > 1:
+            print(f"源点云质心: {np.round(src_centroid, 4)}")
+            print(f"目标点云质心: {np.round(tgt_centroid, 4)}")
+
+        src_centered = src_corr - src_centroid
+        tgt_centered = tgt_corr - tgt_centroid
+        
+        H = src_centered.T @ tgt_centered
+        U, S, VT = np.linalg.svd(H)
+        R = VT.T @ U.T
+        
+        if np.linalg.det(R) < 0:
+            VT[-1, :] *= -1
+            R = VT.T @ U.T
+        t = tgt_centroid - R @ src_centroid
+
+        if debug_level > 1:
+            print(f"SVD奇异值: {S}")
+            print(f"旋转矩阵:\n{np.round(R, 4)}")
+            print(f"平移向量: {np.round(t, 4)}")
+
+        ### 更新变换 ###
+        delta_T = np.eye(4)
+        delta_T[:3, :3] = R
+        delta_T[:3, 3] = t
+        current_transform = delta_T @ current_transform
+        
+        # 计算误差
+        transformed_src = (current_transform[:3, :3] @ src_corr.T).T + current_transform[:3, 3]
+        residuals = np.linalg.norm(transformed_src - tgt_corr, axis=1)
+        current_rmse = np.sqrt(np.mean(residuals**2))
+        
+        # 首次迭代时记录初始误差
+        if iter == 0:
+            initial_rmse = current_rmse
+            history.append({'iter': iter, 'rmse': current_rmse, 'valid_pairs': len(valid_pairs)})
+            if debug_level > 0:
+                print(f"初始RMSE: {current_rmse:.6f}")
+        else:
+            history.append({'iter': iter, 'rmse': current_rmse, 'valid_pairs': len(valid_pairs)})
+            if debug_level > 0:
+                print(f"当前RMSE: {current_rmse:.6f} (Δ={abs(history[-2]['rmse']-current_rmse):.2e})")
+
+        ### 新收敛判断逻辑（允许首次迭代终止）###
+        if iter >= 0 and abs(history[-1]['rmse'] - (history[-2]['rmse'] if iter>0 else initial_rmse)) < convergence_threshold:
+            print(f"✅ 收敛于迭代 {iter+1}, RMSE变化<{convergence_threshold}")
+            break
+
+    # 最终结果输出
+    if debug_level > 0:
+        print("\n=== 配准结果 ===")
+        print(f"最终变换矩阵:\n{np.round(current_transform, 4)}")
+        print(f"收敛时RMSE: {history[-1]['rmse']:.6f}, "
+             f"有效点比例: {history[-1]['valid_pairs']/min(len(src_points),len(tgt_points))*100:.1f}%")
+
+    result = o3d.pipelines.registration.RegistrationResult()
+    result.transformation = current_transform
+    result.inlier_rmse = history[-1]['rmse'] if history else float('inf')
+    result.fitness = len(valid_pairs) / min(len(src_points), len(tgt_points))
+    
+    return result, history
+
+
+
+def bar_tw_icp_registration_old(source, target, init_transform=np.eye(4), 
                            max_iter=50, tau=1.0, eta=0.95, c=4.685, gamma=0.5,
                            convergence_threshold=1e-6):
     """
@@ -374,10 +619,10 @@ def bar_tw_icp_registration(source, target, init_transform=np.eye(4),
     返回:
         o3d.registration.RegistrationResult: 包含最终变换矩阵和评估指标
     """
-    source_temp = copy.deepcopy(source)
-    
+
+
     # 初始变换
-    source_temp = source.transform(init_transform)
+    source_temp = copy.deepcopy(source).transform(init_transform)
     source_points = np.asarray(source_temp.points)
     target_points = np.asarray(target.points)
     N, M = len(source_points), len(target_points)
@@ -498,10 +743,3 @@ def compute_hausdorff(source, target):
         o3d.geometry.PointCloud(o3d.utility.Vector3dVector(source)) ))
     return max(dist1, dist2)
 
-def compute_hausdorff_fine(source_points, target_points):
-    """计算对称Hausdorff距离"""
-    src_tree = cKDTree(source_points)
-    tgt_tree = cKDTree(target_points)
-    dist1, _ = src_tree.query(target_points, k=1)  # target到source的距离
-    dist2, _ = tgt_tree.query(source_points, k=1)  # source到target的距离
-    return max(np.max(dist1), np.max(dist2))
