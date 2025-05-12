@@ -10,14 +10,10 @@ from scipy.spatial import cKDTree
 # 将项目根目录添加到 Python 路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 def visualize_transformed_bunny(angle=30, translation=[0.5, 0, 0], noise_std=0.0):
-    """
-    正确版本：显示原始点云（红色）和变换后点云（蓝色）
-    """
     # 加载原始点云
     source = o3d.data.BunnyMesh()
     source_pcd = o3d.io.read_point_cloud(source.path)
     source_pcd = source_pcd.voxel_down_sample(voxel_size=0.003)
-    
     # 创建变换后的点云（不影响原点云）
     target_pcd = apply_transformation( # 返回新的点云对象
         source_pcd, 
@@ -25,14 +21,12 @@ def visualize_transformed_bunny(angle=30, translation=[0.5, 0, 0], noise_std=0.0
         translation=translation,
         noise_std=noise_std
     )
-    
     # 设置颜色
     source_pcd.paint_uniform_color([1, 0, 0])  # 红色
     target_pcd.paint_uniform_color([0, 0, 1])  # 蓝色
     
     # 添加坐标系
     # coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1, origin=[0, 0, 0])
-    
     # 显示两个点云
     o3d.visualization.draw_geometries(
         [source_pcd, target_pcd],

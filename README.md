@@ -2,7 +2,6 @@
 
 ## Project Structure
 - **data/**: Contains the Bunny dataset.
-- **results/**: Stores experiment results and visualizations.
 - **src/**: Source code for data loading, algorithms, evaluation, and visualization.
 - **requirements.txt**: Python dependencies.
 
